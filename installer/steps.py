@@ -202,10 +202,33 @@ def expected_update(ctx):
 RENAMED_VERSIONS = {'1.1.1': '1.1.0'}
 
 
+def other_line_ending_key(ctx):
+    """The extract key a release whose expected file has the other line endings records (Extract.key, fingerprint's
+    byte layout). The upstream release folders up to 0.3.12 were made from a CRLF checkout (their
+    tools/data/expected-v*.json are 30 bytes longer than the repository's LF file); a release made from this repository
+    keys the same hashes differently, and an install they made then asked for the game files to extract again."""
+    path = ctx.layout.expected(game_version(ctx))
+    if not path.is_file():
+        return None
+    data = path.read_bytes()
+    lf = data.replace(b'\r\n', b'\n')
+    other = lf if data != lf else lf.replace(b'\n', b'\r\n')
+    h = hashlib.sha256()
+    for part in (b'extract-1', path.name.encode() + b'\0' + hashlib.sha256(other).digest()):
+        h.update(part)
+        h.update(b'\1')
+    return h.hexdigest()
+
+
 def migrate_state(ctx):
     """Read a recorded update by its current name. The extraction it recorded stays: its record gets the key of the
     renamed expected file, and Extract.current and the full check of output another release kept
-    (runner.Context.verify_kept) still test the files against the expected hashes."""
+    (runner.Context.verify_kept) still test the files against the expected hashes. An extraction keyed by a release
+    whose expected file differs from this one's only in its line endings (other_line_ending_key) is kept the same way."""
+    record = ctx.state['steps'].get('extract')
+    if record and ctx.state.get('version') not in RENAMED_VERSIONS and record.get('key') == other_line_ending_key(ctx):
+        record['key'] = Extract().key(ctx)
+        ctx.reporter.log('state: the extraction was keyed with the expected hashes in other line endings; kept')
     old = ctx.state.get('version')
     if old not in RENAMED_VERSIONS:
         return

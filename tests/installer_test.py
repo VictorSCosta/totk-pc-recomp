@@ -246,6 +246,44 @@ class RenamedVersionTest(unittest.TestCase):
         self.assertEqual(self.ctx.state['steps']['extract']['key'], 'recorded by 0.2.8')
 
 
+class LineEndingKeyTest(unittest.TestCase):
+    """An extraction keyed by a release folder whose expected file has CRLF line endings (upstream up to 0.3.12) is
+    kept by a release made from the repository's LF files, instead of asking for the game files again."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        self.tools = base / 'tools'
+        (self.tools / 'data').mkdir(parents=True)
+        self.expected = self.tools / 'data' / 'expected-v1.4.3.json'
+        self.expected.write_bytes(b'{\n  "a": 1\n}\n')
+        layout = Layout(root=base, dev=True, release='9.9', python=Path('python'), tools=self.tools,
+                        recomp=base / 'recomp', llvm=Path('llvm'), deps=Path('deps'), runtime=Path('rt'),
+                        runtime_lib=Path('lib'), ninja=Path('ninja'), hactool=Path('hactool'), xlate=Path('xlate'))
+        self.state = {'format': 1, 'release': '0.3.12', 'version': '1.4.3', 'inputs': {},
+                      'steps': {'extract': {'key': '', 'release': '0.3.4'}}}
+        self.ctx = runner.Context(layout, base, base, Reporter(out=io.StringIO()), SimpleNamespace(), state=self.state)
+
+    def crlf_key(self):
+        lf = self.expected.read_bytes()
+        self.expected.write_bytes(lf.replace(b'\n', b'\r\n'))
+        key = steps.Extract().key(self.ctx)
+        self.expected.write_bytes(lf)
+        return key
+
+    def test_crlf_key_is_kept(self):
+        self.state['steps']['extract']['key'] = self.crlf_key()
+        steps.migrate_state(self.ctx)
+        self.assertEqual(self.state['steps']['extract']['key'], steps.Extract().key(self.ctx))
+        self.assertEqual(self.state['steps']['extract']['release'], '0.3.4')   # full check of kept output runs
+
+    def test_other_keys_are_untouched(self):
+        self.state['steps']['extract']['key'] = 'recorded by another expected file'
+        steps.migrate_state(self.ctx)
+        self.assertEqual(self.state['steps']['extract']['key'], 'recorded by another expected file')
+
+
 class LiftKeyTest(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
